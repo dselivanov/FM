@@ -1,10 +1,11 @@
 #include <Rcpp.h>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <cmath>
 using namespace Rcpp;
 using namespace std;
-
-#define LAYOUT 2
+#define CLIP_VALUE 100
 
 inline float dot_product(const float *x, const float *y, const int N) {
   float res = 0.0;
@@ -35,14 +36,13 @@ public:
   FMParam();
   FMParam(float learning_rate,
           int rank,
-          float lambda_w, float lambda_v,
-          float rmsprop_decay):
+          float lambda_w, float lambda_v):
     learning_rate(learning_rate),
     rank(rank),
     lambda_w(lambda_w),
     lambda_v(lambda_v) {};
 
-  void init_weights(NumericVector w_R, NumericMatrix v_R) {
+  void init_weights(const NumericVector &w_R, const NumericMatrix &v_R) {
     // number of features equal to number of input weights
     this->n_features = w_R.size();
 
@@ -56,36 +56,21 @@ public:
       grad_w2[i] = 1;
     }
 
-    if(LAYOUT == 1) {
-      v.resize(rank);
-      grad_v2.resize(rank);
-      for(int k = 0; k < rank; k++) {
-        v[k].resize(n_features);
-        grad_v2[k].resize(n_features);
-        for(int i = 0; i < n_features; i++) {
-          v[k][i] = v_R(i,k);
-          grad_v2[k][i] = 1;
-        }
-      }
-    } else {
-      v.resize(n_features);
-      grad_v2.resize(n_features);
-      for(int k = 0; k < n_features; k++) {
-        // interactions vectors
-        v[k].resize(rank);
-        // gradient history for interactions weights
-        grad_v2[k].resize(rank);
+    v.resize(n_features);
+    grad_v2.resize(n_features);
+    for(int k = 0; k < n_features; k++) {
+      // interactions vectors
+      v[k].resize(rank);
+      // gradient history for interactions weights
+      grad_v2[k].resize(rank);
 
-        for(int i = 0; i < rank; i ++) {
-          // init with interactions weights
-          v[k][i] = v_R(k, i);
-          // init gradient square history
-          grad_v2[k][i] = 1;
-        }
+      for(int i = 0; i < rank; i ++) {
+        // init with interactions weights
+        v[k][i] = v_R(k, i);
+        // init gradient square history
+        grad_v2[k][i] = 1;
       }
     }
-
-
   }
   double learning_rate;
 
@@ -93,8 +78,6 @@ public:
   int rank;
   double lambda_w;
   double lambda_v;
-
-  float rmsprop_decay;
 
   vector< float > w;
   vector< vector< float > > v;
@@ -115,10 +98,7 @@ public:
     for(int i = 0; i < n_features; i++) {
       w_dump[i] = w[i];
       for(int j = 0; j < rank; j++)
-        if(LAYOUT == 1)
-          v_dump(i, j) = v[j][i];
-        else
-          v_dump(i, j) = v[i][j];
+        v_dump(i, j) = v[i][j];
     }
     return(List::create(_["w"] = w_dump, _["v"] = v_dump));
   }
@@ -134,38 +114,31 @@ public:
     // add linear terms
     for(int j = offset_start; j < offset_end; j++) {
       int feature_index = nnz_index[j];
-      res += this->params->w[feature_index] * (float)nnz_value[j];
+      res += this->params->w[feature_index] * nnz_value[j];
     }
     float res_pair_interactions = 0.0;
     // add interactions
     for(int f = 0; f < this->params->rank; f++) {
       float s1 = 0.0;
-      //#pragma omp simd
+      float s2 = 0.0;
+      float prod;
       for(int j = offset_start; j < offset_end; j++) {
         int feature_index = nnz_index[j];
-        if(LAYOUT == 1)
-          s1 += this->params->v[f][feature_index] * (float)nnz_value[j];
-        else
-          s1 += this->params->v[feature_index][f] * (float)nnz_value[j];
+        s1  += this->params->v[feature_index][f] * nnz_value[j];
+        prod = this->params->v[feature_index][f] * nnz_value[j];
+        s2  += prod * prod;
       }
-      s1 = s1 * s1;
-      float s2 = 0;
-      //#pragma omp simd
-      for(int j = offset_start; j < offset_end; j++) {
-        int feature_index = nnz_index[j];
-        float prod;
-        if(LAYOUT == 1)
-          prod = this->params->v[f][feature_index] * (float)nnz_value[j];
-        else
-          prod = this->params->v[feature_index][f] * (float)nnz_value[j];
-        s2 += prod * prod;
-      }
-      res_pair_interactions += s1 - s2;
+      res_pair_interactions += s1 * s1 - s2;
+      // for(int j = offset_start; j < offset_end; j++) {
+      //   int feature_index = nnz_index[j];
+      //   float prod = this->params->v[feature_index][f] * (float)nnz_value[j];
+      //   s2 += prod * prod;
+      // }
     }
     return(res + 0.5 * res_pair_interactions);
   }
 
-  NumericVector fit_predict(const S4 &m, const NumericVector &y_R, int nthread = 0, int do_update = 1, float rmsprop_decay = 0.9) {
+  NumericVector fit_predict(const S4 &m, const NumericVector &y_R, int nthread = 0, int do_update = 1) {
     int nth = omp_thread_count();
     const double *y = y_R.begin();
     // override if user manually specified number of threads
@@ -205,78 +178,64 @@ public:
       if(do_update) {
         // first part of d_L/d_theta -  intependent of parameters theta
         float dL = (this->params->link_function(y_hat_raw * y[i]) - 1) * y[i];
+        vector<float> grad_v_k(this->params->rank);
 
         for( int p = p1; p < p2; p++) {
 
           int   feature_index  = J[p];
           float feature_value = X[p];
 
-          float grad_w = clip(feature_value * dL + 2 * this->params->lambda_w, 100);
+          float grad_w = clip(feature_value * dL + 2 * this->params->lambda_w, CLIP_VALUE);
           this->params->w[feature_index] -= this->params->learning_rate * grad_w / sqrt(this->params->grad_w2[feature_index]);
-
-          // this->params->grad_w2[feature_index] =
-          //   rmsprop_decay * this->params->grad_w2[feature_index] +
-          //   (1 - rmsprop_decay) * grad_w * grad_w;
 
           // update sum gradient squre
           this->params->grad_w2[feature_index] += grad_w * grad_w;
 
           // pairwise interactions
-          // for(int f = 0; f < this->params->rank; f++) {
-          //   float grad_v = 0;
-          //   int len = p2 - p1;
-          //   for(int j = p1; j < p2; j++) {
-          //     int feature_index_2 = J[j];
-          //     float feature_value_2 = X[j];
-          //     grad_v += this->params->v[feature_index_2][f] * feature_value_2;
-          //   }
-          // }
+          //------------------------------------------------------------------------
+          // SIMD vectorized inner products
+          // this chunk extracted from inside of next main loop
+          // iteration through factors and non-zero elements reordered
+          //------------------------------------------------------------------------
+          int len = p2 - p1;
+          for(int f = 0; f < this->params->rank; f++)
+            grad_v_k[f] = -this->params->v[feature_index][f] * feature_value;
 
+          for(int k = 0; k < len; k++) {
+            float val = X[p1 + k];
+            int index = J[p1 + k];
+            float *v_ptr = &this->params->v[index][0];
+
+            #ifdef _OPENMP
+            #pragma omp simd
+            #endif
+            for(int f = 0; f < this->params->rank; f++)
+              grad_v_k[f] += v_ptr[f] * val;
+          }
+          //------------------------------------------------------------------------
+          #ifdef _OPENMP
+          #pragma omp simd
+          #endif
           for(int f = 0; f < this->params->rank; f++) {
-
-            // float grad_v = dot_product(&this->params->v[J[p1]][0], &X[p1], p2 - p1);
-
-            float grad_v = 0;
-            //#pragma omp simd
-            for(int j = p1; j < p2; j++) {
-              int feature_index_2 = J[j];
-              float feature_value_2 = X[j];
-              if(LAYOUT == 1)
-                grad_v += this->params->v[f][feature_index_2] * feature_value_2;
-              else
-                grad_v += this->params->v[feature_index_2][f] * feature_value_2;
-            }
-
-
-            if(LAYOUT == 1)
-              grad_v = grad_v * feature_value - this->params->v[f][feature_index] * feature_value * feature_value;
-            else
-              grad_v = grad_v * feature_value - this->params->v[feature_index][f] * feature_value * feature_value;
-
-            grad_v = clip(grad_v * dL, 100);
-
-            float reg;
-            if(LAYOUT == 1)
-              reg = 2 * this->params->v[f][feature_index] * this->params->lambda_v;
-            else
-              reg = 2 * this->params->v[feature_index][f] * this->params->lambda_v;
-
-            grad_v = grad_v + reg;
-            if(LAYOUT == 1)
-              this->params->v[f][feature_index] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[f][feature_index]);
-            else
-              this->params->v[feature_index][f] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[feature_index][f]);
-
-
+            // THIS CHUNK was moved out of the loop in order to vectorize it with SIMD
+            //------------------------------------------------------------------------
+            // float grad_v = 0;
+            // for(int j = p1; j < p2; j++) {
+            //   int feature_index_2 = J[j];
+            //   float feature_value_2 = X[j];
+            //     grad_v += this->params->v[feature_index_2][f] * feature_value_2;
+            // }
+            // grad_v = feature_value * (grad_v - this->params->v[feature_index][f] * feature_value);
+            // grad_v += 2 * this->params->v[feature_index][f] * this->params->lambda_v;
+            // grad_v = clip(grad_v * dL, 100);
+            //------------------------------------------------------------------------
+            float grad_v = dL * (feature_value * grad_v_k[f] + 2 * this->params->v[feature_index][f] * this->params->lambda_v);
+            // clip for numerical stability
+            grad_v = clip(grad_v , CLIP_VALUE);
+            // update params
+            this->params->v[feature_index][f] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[feature_index][f]);
             // update sum gradient squre
-            if(LAYOUT == 1)
-              this->params->grad_v2[f][feature_index] += grad_v * grad_v;
-            else
-              this->params->grad_v2[feature_index][f] += grad_v * grad_v;
-
-            // this->params->grad_v2[feature_index][f] =
-            //   rmsprop_decay * this->params->grad_v2[feature_index][f] +
-            //   (1 - rmsprop_decay) * grad_v * grad_v;
+            this->params->grad_v2[feature_index][f] += grad_v * grad_v;
           }
         }
       }
@@ -288,10 +247,8 @@ public:
 // [[Rcpp::export]]
 SEXP fm_create_param(double learning_rate,
                      int rank,
-                     double lambda_w, double lambda_v,
-                     float rmsprop_decay = 0.9) {
-  FMParam * param = new FMParam(learning_rate, rank,
-                                lambda_w, lambda_v, rmsprop_decay);
+                     double lambda_w, double lambda_v) {
+  FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v);
   XPtr< FMParam> ptr(param, true);
   return ptr;
 }

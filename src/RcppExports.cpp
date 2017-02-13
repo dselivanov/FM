@@ -6,8 +6,8 @@
 using namespace Rcpp;
 
 // fm_create_param
-SEXP fm_create_param(double learning_rate, int rank, double lambda_w, double lambda_v, float rmsprop_decay);
-RcppExport SEXP FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP, SEXP rmsprop_decaySEXP) {
+SEXP fm_create_param(double learning_rate, int rank, double lambda_w, double lambda_v);
+RcppExport SEXP FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -15,8 +15,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type rank(rankSEXP);
     Rcpp::traits::input_parameter< double >::type lambda_w(lambda_wSEXP);
     Rcpp::traits::input_parameter< double >::type lambda_v(lambda_vSEXP);
-    Rcpp::traits::input_parameter< float >::type rmsprop_decay(rmsprop_decaySEXP);
-    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v, rmsprop_decay));
+    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v));
     return rcpp_result_gen;
 END_RCPP
 }

@@ -4,8 +4,9 @@ Version: 0.1.0
 Date: 2017-02-08
 Title: Factorization Machines
 License: GPL >= 2
-Description: A library for fitting second order Factorization Machines with stochastic gradient descent. 
-    Allows to efficiently learn model parameters out-of-core with adaptive learning rates, asynchronously in parallel.
+Description: A library for very efficient fitting second order Factorization Machines 
+    with stochastic gradient descent. Allows to learn model parameters out-of-core 
+    with adaptive learning rates. Fast - asynchronous parallel, SIMD accelerated.
 Authors@R: c(person("Dmitriy", "Selivanov", role = c("aut", "cre"),
     email = "selivanov.dmitriy@gmail.com"))
 Maintainer: Dmitriy Selivanov <selivanov.dmitriy@gmail.com>
