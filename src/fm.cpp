@@ -1,34 +1,28 @@
+#define CLASSIFICATION 1
+#define REGRESSION 2
+#define CLIP_VALUE 100
+
 #include <Rcpp.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
 #include <cmath>
 using namespace Rcpp;
 using namespace std;
-#define CLIP_VALUE 100
-
-inline float dot_product(const float *x, const float *y, const int N) {
-  float res = 0.0;
-  #pragma omp simd
-  for(size_t i = 0; i < N; i++) {
-    res += x[i] * y[i];
-  }
-  return(res);
-}
 
 int omp_thread_count() {
   int n = 0;
-  #ifdef _OPENMP
-  #pragma omp parallel reduction(+:n)
-  #endif
+#ifdef _OPENMP
+#pragma omp parallel reduction(+:n)
+#endif
   n += 1;
   return n;
 }
 
-inline float clip(float x, float max_val) {
-  if(x > max_val) return(max_val);
-  if(x < -max_val) return(-max_val);
-  return(x);
+inline float clip(float x) {
+  float sign = x < 0.0 ? -1.0:1.0;
+  return(fabs(x) < CLIP_VALUE ? x : sign * CLIP_VALUE);
 }
 
 class FMParam {
@@ -36,49 +30,30 @@ public:
   FMParam();
   FMParam(float learning_rate,
           int rank,
-          float lambda_w, float lambda_v):
+          float lambda_w, float lambda_v,
+          std::string task_name):
     learning_rate(learning_rate),
     rank(rank),
     lambda_w(lambda_w),
-    lambda_v(lambda_v) {};
-
-  void init_weights(const NumericVector &w_R, const NumericMatrix &v_R) {
-    // number of features equal to number of input weights
-    this->n_features = w_R.size();
-
-    w.resize(this->n_features);
-    grad_w2.resize(this->n_features);
-
-    for(int i = 0; i < n_features; i++) {
-      // init single feature weights
-      w[i] = w_R[i];
-      // gradient square history for single feature weights
-      grad_w2[i] = 1;
-    }
-
-    v.resize(n_features);
-    grad_v2.resize(n_features);
-    for(int k = 0; k < n_features; k++) {
-      // interactions vectors
-      v[k].resize(rank);
-      // gradient history for interactions weights
-      grad_v2[k].resize(rank);
-
-      for(int i = 0; i < rank; i ++) {
-        // init with interactions weights
-        v[k][i] = v_R(k, i);
-        // init gradient square history
-        grad_v2[k][i] = 1;
-      }
-    }
+    lambda_v(lambda_v) {
+    if ( task_name == "classification")
+      this->task = CLASSIFICATION;
+    else if( task_name == "regression")
+      this->task = REGRESSION;
+    else throw(Rcpp::exception("can't match task code - not in (1=CLASSIFICATION, 2=REGRESSION)"));
   }
-  double learning_rate;
+  int task = 0;
+
+  float learning_rate;
 
   int n_features;
   int rank;
-  double lambda_w;
-  double lambda_v;
 
+  float lambda_w;
+  float lambda_v;
+  float lambda_w0;
+
+  float w0;
   vector< float > w;
   vector< vector< float > > v;
 
@@ -87,22 +62,67 @@ public:
   vector< float > grad_w2;
 
   float link_function(float x) {
-    return(1.0 / ( 1.0 + exp(-x)));
+    if(this->task == CLASSIFICATION)
+      return(1.0 / ( 1.0 + exp(-x)));
+    if(this->task == REGRESSION)
+      return(x);
+    return(x);
+    throw(Rcpp::exception("no link function"));
   }
   float loss(float pred, float actual) {
+
+    if(this->task == CLASSIFICATION)
+      return(-log( this->link_function(pred * actual) ));
+
+    if(this->task == REGRESSION)
+      return((pred - actual) * (pred - actual));
+
     return(-log( this->link_function(pred * actual) ));
+    throw(Rcpp::exception("no loss function"));
   }
-  List dump() {
-    NumericVector w_dump(n_features);
-    NumericMatrix v_dump(n_features, rank);
-    for(int i = 0; i < n_features; i++) {
-      w_dump[i] = w[i];
-      for(int j = 0; j < rank; j++)
-        v_dump(i, j) = v[i][j];
-    }
-    return(List::create(_["w"] = w_dump, _["v"] = v_dump));
-  }
+  List dump();
+  void init_weights(const NumericVector &w_R, const NumericMatrix &v_R);
 };
+
+List FMParam::dump() {
+  NumericVector w_dump(n_features);
+  NumericMatrix v_dump(n_features, rank);
+  for(int i = 0; i < n_features; i++) {
+    w_dump[i] = w[i];
+    for(int j = 0; j < rank; j++)
+      v_dump(i, j) = v[i][j];
+  }
+  return(List::create(_["w"] = w_dump, _["v"] = v_dump));
+}
+
+void FMParam::init_weights(const NumericVector &w_R, const NumericMatrix &v_R) {
+  // number of features equal to number of input weights
+  this->n_features = w_R.size();
+  w.resize(this->n_features);
+  grad_w2.resize(this->n_features);
+
+  for(int i = 0; i < n_features; i++) {
+    // init single feature weights
+    w[i] = w_R[i];
+    // gradient square history for single feature weights
+    grad_w2[i] = 1;
+  }
+  v.resize(n_features);
+  grad_v2.resize(n_features);
+  for(int k = 0; k < n_features; k++) {
+    // interactions vectors
+    v[k].resize(rank);
+    // gradient history for interactions weights
+    grad_v2[k].resize(rank);
+
+    for(int i = 0; i < rank; i ++) {
+      // init with interactions weights
+      v[k][i] = v_R(k, i);
+      // init gradient square history
+      grad_v2[k][i] = 1;
+    }
+  }
+}
 
 class FMModel {
 public:
@@ -110,7 +130,8 @@ public:
   FMParam *params;
 
   float fm_predict_internal(int *nnz_index, const vector<float> &nnz_value, int offset_start, int offset_end) {
-    float res = 0.0;
+    //float res = 0.0;
+    float res = this->params->w0;
     // add linear terms
     for(int j = offset_start; j < offset_end; j++) {
       int feature_index = nnz_index[j];
@@ -124,16 +145,11 @@ public:
       float prod;
       for(int j = offset_start; j < offset_end; j++) {
         int feature_index = nnz_index[j];
-        s1  += this->params->v[feature_index][f] * nnz_value[j];
         prod = this->params->v[feature_index][f] * nnz_value[j];
+        s1  += prod;
         s2  += prod * prod;
       }
       res_pair_interactions += s1 * s1 - s2;
-      // for(int j = offset_start; j < offset_end; j++) {
-      //   int feature_index = nnz_index[j];
-      //   float prod = this->params->v[feature_index][f] * (float)nnz_value[j];
-      //   s2 += prod * prod;
-      // }
     }
     return(res + 0.5 * res_pair_interactions);
   }
@@ -160,7 +176,7 @@ public:
     IntegerVector JJ = m.slot("j");
     int *J = JJ.begin();
     NumericVector XX = m.slot("x");
-    //double *X = XX.begin();
+    // copy to float vector to improve SIMD performance
     vector<float> X(XX.size());
     for(int i = 0; i < XX.size(); i++)
       X[i] = XX[i];
@@ -176,18 +192,28 @@ public:
       y_hat[i] = this->params->link_function(y_hat_raw);
       // fitting
       if(do_update) {
+        //------------------------------------------------------------------
         // first part of d_L/d_theta -  intependent of parameters theta
-        float dL = (this->params->link_function(y_hat_raw * y[i]) - 1) * y[i];
-        vector<float> grad_v_k(this->params->rank);
+        float dL;
+        if(this->params->task == CLASSIFICATION)
+          dL = (this->params->link_function(y_hat_raw * y[i]) - 1) * y[i];
+        else if(this->params->task == REGRESSION )
+          dL = 2 * (y_hat_raw - y[i]);
+        else
+         throw(Rcpp::exception("task not defined in FMModel::fit_predict()"));
+        //------------------------------------------------------------------
+        // update w0
+        //this->params->w0 -= this->params->learning_rate * dL;
 
+        vector<float> grad_v_k(this->params->rank);
         for( int p = p1; p < p2; p++) {
 
           int   feature_index  = J[p];
           float feature_value = X[p];
 
-          float grad_w = clip(feature_value * dL + 2 * this->params->lambda_w, CLIP_VALUE);
-          this->params->w[feature_index] -= this->params->learning_rate * grad_w / sqrt(this->params->grad_w2[feature_index]);
+          float grad_w = clip(feature_value * dL + 2 * this->params->lambda_w);
 
+          this->params->w[feature_index] -= this->params->learning_rate * grad_w / sqrt(this->params->grad_w2[feature_index]);
           // update sum gradient squre
           this->params->grad_w2[feature_index] += grad_w * grad_w;
 
@@ -231,7 +257,7 @@ public:
             //------------------------------------------------------------------------
             float grad_v = dL * (feature_value * grad_v_k[f] + 2 * this->params->v[feature_index][f] * this->params->lambda_v);
             // clip for numerical stability
-            grad_v = clip(grad_v , CLIP_VALUE);
+            grad_v = clip(grad_v);
             // update params
             this->params->v[feature_index][f] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[feature_index][f]);
             // update sum gradient squre
@@ -245,10 +271,9 @@ public:
 };
 
 // [[Rcpp::export]]
-SEXP fm_create_param(double learning_rate,
-                     int rank,
-                     double lambda_w, double lambda_v) {
-  FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v);
+SEXP fm_create_param(float learning_rate,
+                     int rank, float lambda_w, float lambda_v, const String task) {
+  FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v, task);
   XPtr< FMParam> ptr(param, true);
   return ptr;
 }

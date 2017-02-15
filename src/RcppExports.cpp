@@ -6,16 +6,17 @@
 using namespace Rcpp;
 
 // fm_create_param
-SEXP fm_create_param(double learning_rate, int rank, double lambda_w, double lambda_v);
-RcppExport SEXP FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP) {
+SEXP fm_create_param(float learning_rate, int rank, float lambda_w, float lambda_v, const String task);
+RcppExport SEXP FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP, SEXP taskSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< double >::type learning_rate(learning_rateSEXP);
+    Rcpp::traits::input_parameter< float >::type learning_rate(learning_rateSEXP);
     Rcpp::traits::input_parameter< int >::type rank(rankSEXP);
-    Rcpp::traits::input_parameter< double >::type lambda_w(lambda_wSEXP);
-    Rcpp::traits::input_parameter< double >::type lambda_v(lambda_vSEXP);
-    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v));
+    Rcpp::traits::input_parameter< float >::type lambda_w(lambda_wSEXP);
+    Rcpp::traits::input_parameter< float >::type lambda_v(lambda_vSEXP);
+    Rcpp::traits::input_parameter< const String >::type task(taskSEXP);
+    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v, task));
     return rcpp_result_gen;
 END_RCPP
 }

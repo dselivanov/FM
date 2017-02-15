@@ -1,6 +1,41 @@
 #' @useDynLib FM
 #' @importFrom Rcpp evalCpp
 NULL
+
+#' @name FM
+#' @title Creates FactorizationMachines model.
+#' @description Creates second order Factorization Machines model
+#' @section Usage:
+#' For usage details see \bold{Methods, Arguments and Examples} sections.
+#' \preformatted{
+#' fm = FM$new(learning_rate = 0.2, rank = 8, lambda_w = 1e-6, lambda_v = 1e-6, task = "classification")
+#' fm$partial_fit(X, y, nthread  = 0, ...)
+#' fm$predict(X, nthread  = 0, ...)
+#' }
+#' @format \code{\link{R6Class}} object.
+#' @section Methods:
+#' \describe{
+#'   \item{\code{FM$new(learning_rate = 0.2, rank = 8, lambda_w = 1e-6, lambda_v = 1e-6, task = "classification")}}{Constructor
+#'   for FactorizationMachines model. For description of arguments see \bold{Arguments} section.}
+#'   \item{\code{$partial_fit(X, y, nthread  = 0, ...)}}{fits/updates model given input matrix \code{X} and target vector \code{y}.
+#'   \code{X} shape = (n_samples, n_features)}
+#'   \item{\code{$predict(X, nthread  = 0, ...)}}{predicts output \code{X}}
+#'   \item{\code{$coef()}}{ return coefficients of the regression model}
+#'   \item{\code{$dump()}}{create dump of the model (actually \code{list}) with current model parameters}
+#'}
+#' @section Arguments:
+#' \describe{
+#'  \item{fm}{\code{FTRL} object}
+#'  \item{X}{Input sparse matrix - native format is \code{Matrix::RsparseMatrix}.
+#'  If \code{X} is in different format, model will try to convert it to \code{RsparseMatrix}
+#'  with \code{as(X, "RsparseMatrix")} call}
+#'  \item{learning_rate}{learning rate for AdaGrad SGD}
+#'  \item{rank}{rank of the latent dimension in factorization}
+#'  \item{lambda_w}{regularization parameter for linear terms}
+#'  \item{lambda_v}{regularization parameter for interactions terms}
+#'  \item{n_features}{number of features in model (number of columns in expected model matrix) }
+#'  \item{task}{ \code{"regression"} or \code{"classification"}}
+#' }
 #' @export
 FM = R6::R6Class(
   classname = "estimator",
@@ -8,12 +43,12 @@ FM = R6::R6Class(
     #-----------------------------------------------------------------
     initialize = function(learning_rate = 0.2, rank = 4,
                           lambda_w = 0, lambda_v = 0,
-                          family = c("binomial")) {
+                          task = c("classification", "regression")) {
       stopifnot(lambda_w >= 0 && lambda_v >= 0 && learning_rate > 0 && rank >= 1)
-      family = match.arg(family);
+      task = match.arg(task);
       private$init_model_param(learning_rate = learning_rate, rank = rank,
                                lambda_w = lambda_w, lambda_v = lambda_v,
-                               family = family)
+                               task = task)
     },
     partial_fit = function(X, y, nthread = 0, ...) {
       if(!inherits(class(X), private$internal_matrix_format)) {
@@ -32,7 +67,7 @@ FM = R6::R6Class(
 
       stopifnot(!anyNA(y))
       # convert to (1, -1) as it required by loss function in FM
-      if(private$family == 'binomial')
+      if(private$task == 'classification')
         y = ifelse(y == 1, 1, -1)
 
       # check no NA - anyNA() is by far fastest solution
@@ -74,18 +109,17 @@ FM = R6::R6Class(
     rank = NULL,
     lambda_w = NULL,
     lambda_v = NULL,
-    family = NULL,
-    family_name = NULL,
+    task = NULL,
     #--------------------------------------------------------------
-    init_model_param = function(learning_rate, rank, lambda_w, lambda_v, family) {
+    init_model_param = function(learning_rate, rank, lambda_w, lambda_v, task) {
 
       private$learning_rate = learning_rate
       private$rank = rank
       private$lambda_w = lambda_w
       private$lambda_v = lambda_v
-      private$family = family
+      private$task = task
 
-      private$ptr_param = fm_create_param(learning_rate, rank, lambda_w, lambda_v)
+      private$ptr_param = fm_create_param(learning_rate, rank, lambda_w, lambda_v, task)
     },
 
     init_model_state = function(n_features, w = NULL, v = NULL) {
@@ -97,10 +131,10 @@ FM = R6::R6Class(
 
       # init with 0
       if(is.null(w))
-        w = runif(n_features, v_init_mean, v_init_stddev)
+        w = numeric(n_features)
       # init with small numbers
       if(is.null(v))
-        v = matrix(runif(n_features * private$rank, v_init_mean, v_init_stddev),
+        v = matrix(rnorm(n_features * private$rank, v_init_mean, v_init_stddev),
                    nrow = n_features, ncol = private$rank)
       # update param pointer
       fm_init_weights(private$ptr_param, w, v)
