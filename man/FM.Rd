@@ -49,5 +49,5 @@ fm$predict(X, nthread  = 0, ...)
  \item{task}{ \code{"regression"} or \code{"classification"}}
 }
 }
-\keyword{datasets}
 
+\keyword{datasets}

@@ -33,17 +33,18 @@ BEGIN_RCPP
 END_RCPP
 }
 // fm_partial_fit
-NumericVector fm_partial_fit(SEXP ptr, const S4& X, const NumericVector& y, int nthread, int do_update);
-RcppExport SEXP FM_fm_partial_fit(SEXP ptrSEXP, SEXP XSEXP, SEXP ySEXP, SEXP nthreadSEXP, SEXP do_updateSEXP) {
+NumericVector fm_partial_fit(SEXP ptr, const S4& X, const NumericVector& y, const NumericVector& w, int nthread, int do_update);
+RcppExport SEXP FM_fm_partial_fit(SEXP ptrSEXP, SEXP XSEXP, SEXP ySEXP, SEXP wSEXP, SEXP nthreadSEXP, SEXP do_updateSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type ptr(ptrSEXP);
     Rcpp::traits::input_parameter< const S4& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const NumericVector& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type w(wSEXP);
     Rcpp::traits::input_parameter< int >::type nthread(nthreadSEXP);
     Rcpp::traits::input_parameter< int >::type do_update(do_updateSEXP);
-    rcpp_result_gen = Rcpp::wrap(fm_partial_fit(ptr, X, y, nthread, do_update));
+    rcpp_result_gen = Rcpp::wrap(fm_partial_fit(ptr, X, y, w, nthread, do_update));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -57,4 +58,17 @@ BEGIN_RCPP
     rcpp_result_gen = Rcpp::wrap(fm_dump(ptr));
     return rcpp_result_gen;
 END_RCPP
+}
+
+static const R_CallMethodDef CallEntries[] = {
+    {"FM_fm_create_param", (DL_FUNC) &FM_fm_create_param, 5},
+    {"FM_fm_init_weights", (DL_FUNC) &FM_fm_init_weights, 3},
+    {"FM_fm_partial_fit", (DL_FUNC) &FM_fm_partial_fit, 6},
+    {"FM_fm_dump", (DL_FUNC) &FM_fm_dump, 1},
+    {NULL, NULL, 0}
+};
+
+RcppExport void R_init_FM(DllInfo *dll) {
+    R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
+    R_useDynamicSymbols(dll, FALSE);
 }

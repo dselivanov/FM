@@ -1,7 +1,7 @@
 Package: FM
 Type: Package
-Version: 0.1.0
-Date: 2017-02-15
+Version: 0.1.1
+Date: 2017-06-04
 Title: Factorization Machines
 License: GPL >= 2
 Description: A library for very efficient fitting second order Factorization Machines 
@@ -23,4 +23,4 @@ LinkingTo:
 URL: https://github.com/dselivanov/FM
 BugReports: https://github.com/dselivanov/FM/issues
 LazyData: true
-RoxygenNote: 5.0.1
+RoxygenNote: 6.0.1

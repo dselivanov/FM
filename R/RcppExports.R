@@ -9,8 +9,8 @@ fm_init_weights <- function(ptr, w_R, v_R) {
     invisible(.Call('FM_fm_init_weights', PACKAGE = 'FM', ptr, w_R, v_R))
 }
 
-fm_partial_fit <- function(ptr, X, y, nthread = 1L, do_update = 1L) {
-    .Call('FM_fm_partial_fit', PACKAGE = 'FM', ptr, X, y, nthread, do_update)
+fm_partial_fit <- function(ptr, X, y, w, nthread = 1L, do_update = 1L) {
+    .Call('FM_fm_partial_fit', PACKAGE = 'FM', ptr, X, y, w, nthread, do_update)
 }
 
 fm_dump <- function(ptr) {

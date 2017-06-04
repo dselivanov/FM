@@ -34,6 +34,7 @@ public:
           std::string task_name):
     learning_rate(learning_rate),
     rank(rank),
+    w0(0),
     lambda_w(lambda_w),
     lambda_v(lambda_v) {
     if ( task_name == "classification")
@@ -48,12 +49,13 @@ public:
 
   int n_features;
   int rank;
+  float w0;
 
   float lambda_w;
   float lambda_v;
   float lambda_w0;
 
-  float w0;
+
   vector< float > w;
   vector< vector< float > > v;
 
@@ -154,9 +156,10 @@ public:
     return(res + 0.5 * res_pair_interactions);
   }
 
-  NumericVector fit_predict(const S4 &m, const NumericVector &y_R, int nthread = 0, int do_update = 1) {
+  NumericVector fit_predict(const S4 &m, const NumericVector &y_R, const NumericVector &w_R, int nthread = 0, int do_update = 1) {
     int nth = omp_thread_count();
     const double *y = y_R.begin();
+    const double *w = w_R.begin();
     // override if user manually specified number of threads
     if(nthread > 0)
       nth = nthread;
@@ -201,9 +204,11 @@ public:
           dL = 2 * (y_hat_raw - y[i]);
         else
          throw(Rcpp::exception("task not defined in FMModel::fit_predict()"));
+        // mult by error-weight of the sample
+        dL *= w[i];
         //------------------------------------------------------------------
         // update w0
-        //this->params->w0 -= this->params->learning_rate * dL;
+        this->params->w0 -= this->params->learning_rate * dL;
 
         vector<float> grad_v_k(this->params->rank);
         for( int p = p1; p < p2; p++) {
@@ -285,10 +290,10 @@ void fm_init_weights(SEXP ptr, const NumericVector &w_R, const NumericMatrix &v_
 }
 
 // [[Rcpp::export]]
-NumericVector fm_partial_fit(SEXP ptr, const S4 &X, const NumericVector &y, int nthread = 1, int do_update = 1) {
+NumericVector fm_partial_fit(SEXP ptr, const S4 &X, const NumericVector &y, const NumericVector &w, int nthread = 1, int do_update = 1) {
   Rcpp::XPtr<FMParam> params(ptr);
   FMModel model(params);
-  return(model.fit_predict(X, y, nthread, do_update));
+  return(model.fit_predict(X, y, w, nthread, do_update));
 }
 
 // [[Rcpp::export]]
