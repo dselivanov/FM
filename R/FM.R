@@ -50,7 +50,7 @@ FM = R6::R6Class(
                                lambda_w = lambda_w, lambda_v = lambda_v,
                                task = task)
     },
-    partial_fit = function(X, y, nthread = 0, ...) {
+    partial_fit = function(X, y, nthread = 0, weights = rep(1.0, length(y)), ...) {
       if(!inherits(class(X), private$internal_matrix_format)) {
         # message(Sys.time(), " casting input matrix (class ", class(X), ") to ", private$internal_matrix_format)
         X = as(X, private$internal_matrix_format)
@@ -64,7 +64,7 @@ FM = R6::R6Class(
       stopifnot(X_ncol == private$n_features)
       # check number of samples = number of outcomes
       stopifnot(nrow(X) == length(y))
-
+      stopifnot(is.numeric(weights) && length(weights) == length(y))
       stopifnot(!anyNA(y))
       # convert to (1, -1) as it required by loss function in FM
       if(private$task == 'classification')
@@ -74,7 +74,7 @@ FM = R6::R6Class(
       if(anyNA(X@x))
         stop("NA's in input matrix are not allowed")
 
-      p = fm_partial_fit(private$ptr_param, X, y, do_update = TRUE, nthread = nthread)
+      p = fm_partial_fit(private$ptr_param, X, y, weights, do_update = TRUE, nthread = nthread)
       invisible(p)
     },
     predict =  function(X, nthread = 0, ...) {
@@ -88,8 +88,8 @@ FM = R6::R6Class(
 
       if(any(is.na(X)))
         stop("NA's in input matrix are not allowed")
-
-      p = fm_partial_fit(private$ptr_param, X, numeric(0), do_update = FALSE, nthread = nthread)
+      # dummy numeric(0) - don't have y and don't need weights
+      p = fm_partial_fit(private$ptr_param, X, numeric(0), numeric(0), do_update = FALSE, nthread = nthread)
       return(p);
     },
     dump = function() {
