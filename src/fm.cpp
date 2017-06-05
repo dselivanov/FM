@@ -260,9 +260,9 @@ public:
             // grad_v += 2 * this->params->v[feature_index][f] * this->params->lambda_v;
             // grad_v = clip(grad_v * dL, 100);
             //------------------------------------------------------------------------
-            float grad_v = dL * (feature_value * grad_v_k[f] + 2 * this->params->v[feature_index][f] * this->params->lambda_v);
+            float grad_v = dL * (feature_value * grad_v_k[f]) + 2 * this->params->v[feature_index][f] * this->params->lambda_v;
             // clip for numerical stability
-            grad_v = clip(grad_v);
+            grad_v = clip_v(grad_v);
             // update params
             this->params->v[feature_index][f] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[feature_index][f]);
             // update sum gradient squre

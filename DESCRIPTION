@@ -1,7 +1,7 @@
 Package: FM
 Type: Package
-Version: 0.1.1
-Date: 2017-06-04
+Version: 0.1.2
+Date: 2017-06-05
 Title: Factorization Machines
 License: GPL >= 2
 Description: A library for very efficient fitting second order Factorization Machines 
