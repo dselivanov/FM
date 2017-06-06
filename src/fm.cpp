@@ -185,7 +185,7 @@ public:
       X[i] = XX[i];
 
     #ifdef _OPENMP
-    #pragma omp parallel for num_threads(nth)
+    #pragma omp parallel for num_threads(nth) schedule(guided, 1000)
     #endif
     for(int i = 0; i < N; i++) {
       size_t p1 = P[i];
