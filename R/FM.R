@@ -46,19 +46,42 @@ FM = R6::R6Class(
                           task = c("classification", "regression")) {
       stopifnot(lambda_w >= 0 && lambda_v >= 0 && learning_rate > 0 && rank >= 1)
       task = match.arg(task);
-      private$init_model_param(learning_rate = learning_rate, rank = rank,
-                               lambda_w = lambda_w, lambda_v = lambda_v,
-                               task = task)
+      private$learning_rate = learning_rate
+      private$rank = rank
+      private$lambda_w = lambda_w
+      private$lambda_v = lambda_v
+      private$task = task
     },
     partial_fit = function(X, y, nthread = 0, weights = rep(1.0, length(y)), ...) {
       if(!inherits(class(X), private$internal_matrix_format)) {
-        # message(Sys.time(), " casting input matrix (class ", class(X), ") to ", private$internal_matrix_format)
         X = as(X, private$internal_matrix_format)
       }
       X_ncol = ncol(X)
       # init model during first first fit
       if(!private$is_initialized) {
-        private$init_model_state(n_features = X_ncol, NULL, NULL)
+        private$n_features = X_ncol
+        #---------------------------------------------
+        private$w0 = 0L
+        #---------------------------------------------
+        private$w = integer(private$n_features)
+        fill_float_vector_randn(private$w, 0.001)
+        #---------------------------------------------
+        private$v = matrix(0L, nrow = private$rank, ncol = private$n_features)
+        fill_float_matrix_randn(private$v, 0.001)
+        #---------------------------------------------
+        private$grad_w2 = integer(private$n_features)
+        fill_float_vector(private$grad_w2, 1.0)
+        #---------------------------------------------
+        private$grad_v2 = matrix(0L, nrow = private$rank, ncol = private$n_features)
+        fill_float_matrix(private$grad_v2, 1.0)
+        #---------------------------------------------
+        private$ptr_param = fm_create_param(private$learning_rate, private$rank, private$lambda_w, private$lambda_v,
+                                            private$w0,
+                                            private$w, private$v,
+                                            private$grad_w2, private$grad_v2,
+                                            private$task)
+        private$ptr_model = fm_create_model(private$ptr_param)
+        private$is_initialized = TRUE
       }
       # on consequent updates check that we are wotking with input matrix with same numner of features
       stopifnot(X_ncol == private$n_features)
@@ -74,14 +97,24 @@ FM = R6::R6Class(
       if(anyNA(X@x))
         stop("NA's in input matrix are not allowed")
 
-      p = fm_partial_fit(private$ptr_param, X, y, weights, do_update = TRUE, nthread = nthread)
+      p = fm_partial_fit(private$ptr_model, X, y, weights, do_update = TRUE, nthread = nthread)
       invisible(p)
     },
     predict =  function(X, nthread = 0, ...) {
-
+      if(is.null(private$ptr_param) || is_invalid_ptr(private$ptr_param)) {
+        print("is.null(private$ptr_param) || is_invalid_ptr(private$ptr_param)")
+        if(private$is_initialized) {
+          print("init private$ptr_param")
+          private$ptr_param = fm_create_param(private$learning_rate, private$rank, private$lambda_w, private$lambda_v,
+                                              private$w0,
+                                              private$w, private$v,
+                                              private$grad_w2, private$grad_v2,
+                                              private$task)
+          private$ptr_model = fm_create_model(private$ptr_param)
+        }
+      }
       stopifnot(private$is_initialized)
       if(!inherits(class(X), private$internal_matrix_format)) {
-        # message(Sys.time(), " casting input matrix (class ", class(X), ") to ", private$internal_matrix_format)
         X = as(X, private$internal_matrix_format)
       }
       stopifnot(ncol(X) == private$model$n_features)
@@ -89,11 +122,8 @@ FM = R6::R6Class(
       if(any(is.na(X)))
         stop("NA's in input matrix are not allowed")
       # dummy numeric(0) - don't have y and don't need weights
-      p = fm_partial_fit(private$ptr_param, X, numeric(0), numeric(0), do_update = FALSE, nthread = nthread)
+      p = fm_partial_fit(private$ptr_model, X, numeric(0), numeric(0), do_update = FALSE, nthread = nthread)
       return(p);
-    },
-    dump = function() {
-      fm_dump(private$ptr_param)
     }
   ),
   private = list(
@@ -111,37 +141,13 @@ FM = R6::R6Class(
     lambda_v = NULL,
     task = NULL,
     #--------------------------------------------------------------
-    init_model_param = function(learning_rate, rank, lambda_w, lambda_v, task) {
-
-      private$learning_rate = learning_rate
-      private$rank = rank
-      private$lambda_w = lambda_w
-      private$lambda_v = lambda_v
-      private$task = task
-
-      private$ptr_param = fm_create_param(learning_rate, rank, lambda_w, lambda_v, task)
-    },
-
-    init_model_state = function(n_features, w = NULL, v = NULL) {
-      # init R side model params
-      private$n_features = n_features
-
-      v_init_stddev = 0.001
-      v_init_mean = 0
-
-      # init with 0
-      if(is.null(w))
-        w = numeric(n_features)
-      # init with small numbers
-      if(is.null(v))
-        v = matrix(rnorm(n_features * private$rank, v_init_mean, v_init_stddev),
-                   nrow = n_features, ncol = private$rank)
-      # update param pointer
-      fm_init_weights(private$ptr_param, w, v)
-      rm(w, v); gc();
-      # mark that we initialized model
-      private$is_initialized = TRUE
-    }
+    # these 5 will be modified in place in C++ code
+    #--------------------------------------------------------------
+    v = NULL,
+    w = NULL,
+    w0 = NULL,
+    grad_v2 = NULL,
+    grad_w2 = NULL
   )
 )
 

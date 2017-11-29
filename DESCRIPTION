@@ -17,9 +17,11 @@ Depends:
 Imports:
     Matrix (>= 1.1),
     Rcpp (>= 0.12.9), 
+    RcppArmadillo,
     R6 (>= 2.1.2)
 LinkingTo: 
-    Rcpp
+    Rcpp, 
+    RcppArmadillo
 URL: https://github.com/dselivanov/FM
 BugReports: https://github.com/dselivanov/FM/issues
 LazyData: true

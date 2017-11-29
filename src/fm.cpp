@@ -2,6 +2,7 @@
 #define REGRESSION 2
 #define CLIP_VALUE 100
 
+#include <RcppArmadillo.h>
 #include <Rcpp.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -10,6 +11,7 @@
 #include <cmath>
 using namespace Rcpp;
 using namespace std;
+using namespace arma;
 
 int omp_thread_count() {
   int n = 0;
@@ -34,7 +36,6 @@ public:
           std::string task_name):
     learning_rate(learning_rate),
     rank(rank),
-    w0(0),
     lambda_w(lambda_w),
     lambda_v(lambda_v) {
     if ( task_name == "classification")
@@ -49,19 +50,16 @@ public:
 
   int n_features;
   int rank;
-  float w0;
+  float *w0;
 
   float lambda_w;
   float lambda_v;
-  float lambda_w0;
 
+  fvec w;
+  fvec grad_w2;
 
-  vector< float > w;
-  vector< vector< float > > v;
-
-  //squared gradients for adaptive learning rate
-  vector< vector< float > > grad_v2;
-  vector< float > grad_w2;
+  fmat v;
+  fmat grad_v2;
 
   float link_function(float x) {
     if(this->task == CLASSIFICATION)
@@ -82,62 +80,35 @@ public:
     return(-log( this->link_function(pred * actual) ));
     throw(Rcpp::exception("no loss function"));
   }
-  List dump();
-  void init_weights(const NumericVector &w_R, const NumericMatrix &v_R);
+  void init_weights(IntegerVector &w0_R,
+                    IntegerVector &w_R, IntegerMatrix &v_R,
+                    IntegerVector &grad_w2_R, IntegerMatrix &grad_v2_R) {
+    this->w0 = (float *)w0_R.begin();
+    // number of features equal to number of input weights
+    this->n_features = w_R.size();
+
+    this->v = fmat((float *)v_R.begin(), v_R.nrow(), v_R.ncol(), false, false);
+    this->grad_v2 = fmat((float *)grad_v2_R.begin(), grad_v2_R.nrow(), grad_v2_R.ncol(), false, false);
+
+    this->w = fvec((float *)w_R.begin(), w_R.size(), false, false);
+    this->grad_w2 = fvec((float *)grad_w2_R.begin(), grad_w2_R.size(), false, false);
+  }
 };
-
-List FMParam::dump() {
-  NumericVector w_dump(n_features);
-  NumericMatrix v_dump(n_features, rank);
-  for(int i = 0; i < n_features; i++) {
-    w_dump[i] = w[i];
-    for(int j = 0; j < rank; j++)
-      v_dump(i, j) = v[i][j];
-  }
-  return(List::create(_["w"] = w_dump, _["v"] = v_dump));
-}
-
-void FMParam::init_weights(const NumericVector &w_R, const NumericMatrix &v_R) {
-  // number of features equal to number of input weights
-  this->n_features = w_R.size();
-  w.resize(this->n_features);
-  grad_w2.resize(this->n_features);
-
-  for(int i = 0; i < n_features; i++) {
-    // init single feature weights
-    w[i] = w_R[i];
-    // gradient square history for single feature weights
-    grad_w2[i] = 1;
-  }
-  v.resize(n_features);
-  grad_v2.resize(n_features);
-  for(int k = 0; k < n_features; k++) {
-    // interactions vectors
-    v[k].resize(rank);
-    // gradient history for interactions weights
-    grad_v2[k].resize(rank);
-
-    for(int i = 0; i < rank; i ++) {
-      // init with interactions weights
-      v[k][i] = v_R(k, i);
-      // init gradient square history
-      grad_v2[k][i] = 1;
-    }
-  }
-}
 
 class FMModel {
 public:
   FMModel(FMParam *params): params(params) {};
   FMParam *params;
 
-  float fm_predict_internal(int *nnz_index, const vector<float> &nnz_value, int offset_start, int offset_end) {
-    //float res = 0.0;
-    float res = this->params->w0;
+  float fm_predict_internal(const uint32_t *nnz_index, const double *nnz_value, int offset_start, int offset_end) {
+    float res = *this->params->w0;
     // add linear terms
+    #ifdef _OPENMP
+    #pragma omp simd
+    #endif
     for(int j = offset_start; j < offset_end; j++) {
-      int feature_index = nnz_index[j];
-      res += this->params->w[feature_index] * nnz_value[j];
+      uint32_t feature_index = nnz_index[j];
+      res += this->params->w[feature_index] * (float)nnz_value[j];
     }
     float res_pair_interactions = 0.0;
     // add interactions
@@ -145,9 +116,13 @@ public:
       float s1 = 0.0;
       float s2 = 0.0;
       float prod;
+      subview_row<float> vf = this->params->v.row(f);
+      #ifdef _OPENMP
+      #pragma omp simd
+      #endif
       for(int j = offset_start; j < offset_end; j++) {
         int feature_index = nnz_index[j];
-        prod = this->params->v[feature_index][f] * nnz_value[j];
+        prod = vf[feature_index] * nnz_value[j];
         s1  += prod;
         s2  += prod * prod;
       }
@@ -177,19 +152,16 @@ public:
     IntegerVector PP = m.slot("p");
     int *P = PP.begin();
     IntegerVector JJ = m.slot("j");
-    int *J = JJ.begin();
+    uint32_t *J = (uint32_t *)JJ.begin();
     NumericVector XX = m.slot("x");
-    // copy to float vector to improve SIMD performance
-    vector<float> X(XX.size());
-    for(int i = 0; i < XX.size(); i++)
-      X[i] = XX[i];
+    double *X = XX.begin();
 
     #ifdef _OPENMP
     #pragma omp parallel for num_threads(nth) schedule(guided, 1000)
     #endif
     for(int i = 0; i < N; i++) {
-      size_t p1 = P[i];
-      size_t p2 = P[i + 1];
+      uint32_t p1 = P[i];
+      uint32_t p2 = P[i + 1];
       float y_hat_raw = this->fm_predict_internal(J, X, p1, p2);
       // prediction
       y_hat[i] = this->params->link_function(y_hat_raw);
@@ -208,12 +180,9 @@ public:
         dL *= w[i];
         //------------------------------------------------------------------
         // update w0
-        this->params->w0 -= this->params->learning_rate * dL;
-
-        vector<float> grad_v_k(this->params->rank);
-        for( int p = p1; p < p2; p++) {
-
-          int   feature_index  = J[p];
+        *this->params->w0 -= this->params->learning_rate * dL;
+        for( uint32_t p = p1; p < p2; p++) {
+          uint32_t feature_index  = J[p];
           float feature_value = X[p];
 
           float grad_w = clip(feature_value * dL + 2 * this->params->lambda_w);
@@ -224,50 +193,30 @@ public:
 
           // pairwise interactions
           //------------------------------------------------------------------------
-          // SIMD vectorized inner products
-          // this chunk extracted from inside of next main loop
-          // iteration through factors and non-zero elements reordered
-          //------------------------------------------------------------------------
-          int len = p2 - p1;
-          for(int f = 0; f < this->params->rank; f++)
-            grad_v_k[f] = -this->params->v[feature_index][f] * feature_value;
-
-          for(int k = 0; k < len; k++) {
+          arma::fvec grad_v_k(-this->params->v.col(feature_index) * feature_value);
+          for(uint32_t k = 0; k < p2 - p1; k++) {
             float val = X[p1 + k];
-            int index = J[p1 + k];
-            float *v_ptr = &this->params->v[index][0];
-
+            uint32_t index = J[p1 + k];
+            // same as
+            // grad_v_k += this->params->v.col(index) * val;
+            // but faster - not sure why not vectorized
+            float *v_ptr = this->params->v.colptr(index);
             #ifdef _OPENMP
             #pragma omp simd
             #endif
             for(int f = 0; f < this->params->rank; f++)
               grad_v_k[f] += v_ptr[f] * val;
           }
-          //------------------------------------------------------------------------
+
+          fvec grad_v = dL * (feature_value * grad_v_k) + 2 * this->params->v.col(feature_index) * this->params->lambda_v;
+
           #ifdef _OPENMP
           #pragma omp simd
           #endif
-          for(int f = 0; f < this->params->rank; f++) {
-            // THIS CHUNK was moved out of the loop in order to vectorize it with SIMD
-            //------------------------------------------------------------------------
-            // float grad_v = 0;
-            // for(int j = p1; j < p2; j++) {
-            //   int feature_index_2 = J[j];
-            //   float feature_value_2 = X[j];
-            //     grad_v += this->params->v[feature_index_2][f] * feature_value_2;
-            // }
-            // grad_v = feature_value * (grad_v - this->params->v[feature_index][f] * feature_value);
-            // grad_v += 2 * this->params->v[feature_index][f] * this->params->lambda_v;
-            // grad_v = clip(grad_v * dL, 100);
-            //------------------------------------------------------------------------
-            float grad_v = dL * (feature_value * grad_v_k[f]) + 2 * this->params->v[feature_index][f] * this->params->lambda_v;
-            // clip for numerical stability
-            grad_v = clip(grad_v);
-            // update params
-            this->params->v[feature_index][f] -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2[feature_index][f]);
-            // update sum gradient squre
-            this->params->grad_v2[feature_index][f] += grad_v * grad_v;
-          }
+          for(uword i = 0; i < grad_v.size(); i++) grad_v[i] = clip(grad_v[i]);
+
+          this->params->v.col(feature_index) -= this->params->learning_rate * grad_v / sqrt(this->params->grad_v2.col(feature_index));
+          this->params->grad_v2.col(feature_index) += grad_v % grad_v;
         }
       }
     }
@@ -277,28 +226,64 @@ public:
 
 // [[Rcpp::export]]
 SEXP fm_create_param(float learning_rate,
-                     int rank, float lambda_w, float lambda_v, const String task) {
+                     int rank,
+                     float lambda_w,
+                     float lambda_v,
+                     IntegerVector &w0_R,
+                     IntegerVector &w_R,
+                     IntegerMatrix &v_R,
+                     IntegerVector &grad_w2_R,
+                     IntegerMatrix &grad_v2_R,
+                     const String task) {
   FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v, task);
+  param->init_weights(w0_R,  w_R, v_R, grad_w2_R, grad_v2_R);
   XPtr< FMParam> ptr(param, true);
   return ptr;
 }
 
 // [[Rcpp::export]]
-void fm_init_weights(SEXP ptr, const NumericVector &w_R, const NumericMatrix &v_R) {
-  Rcpp::XPtr<FMParam> params(ptr);
-  params->init_weights(w_R, v_R);
+SEXP fm_create_model(SEXP params_ptr) {
+  Rcpp::XPtr<FMParam> params(params_ptr);
+  FMModel *model = new FMModel(params);
+  XPtr< FMModel> model_ptr(model, true);
+  return model_ptr;
+}
+
+// [[Rcpp::export]]
+void fill_float_matrix_randn(IntegerMatrix &x, double stdev = 0.001) {
+  fmat res = fmat((float *)x.begin(), x.nrow(), x.ncol(), false, false);
+  res.randn();
+  res *= stdev;
+}
+
+// [[Rcpp::export]]
+void fill_float_matrix(IntegerMatrix &x, double val) {
+  fmat res = fmat((float *)x.begin(), x.nrow(), x.ncol(), false, false);
+  res.fill(float(val));
+}
+
+// [[Rcpp::export]]
+void fill_float_vector_randn(IntegerVector &x, double stdev = 0.001) {
+  fvec res = fvec((float *)x.begin(), x.size(), false, false);
+  res.randn();
+  res *= stdev;
+}
+
+// [[Rcpp::export]]
+void fill_float_vector(IntegerVector &x, double val) {
+  fvec res = fvec((float *)x.begin(), x.size(), false, false);
+  res.fill(float(val));
 }
 
 // [[Rcpp::export]]
 NumericVector fm_partial_fit(SEXP ptr, const S4 &X, const NumericVector &y, const NumericVector &w, int nthread = 1, int do_update = 1) {
-  Rcpp::XPtr<FMParam> params(ptr);
-  FMModel model(params);
-  return(model.fit_predict(X, y, w, nthread, do_update));
+  Rcpp::XPtr<FMModel> model(ptr);
+  return(model->fit_predict(X, y, w, nthread, do_update));
 }
 
+// checks if external pointer invalid
 // [[Rcpp::export]]
-List fm_dump(SEXP ptr) {
-  Rcpp::XPtr<FMParam> params(ptr);
-  FMModel model(params);
-  return(model.params->dump());
+int is_invalid_ptr(SEXP sexp_ptr) {
+  Rcpp::XPtr<SEXP> ptr(sexp_ptr);
+  return (ptr.get() == NULL);
 }
