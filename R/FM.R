@@ -43,7 +43,8 @@ FM = R6::R6Class(
     #-----------------------------------------------------------------
     initialize = function(learning_rate = 0.2, rank = 4,
                           lambda_w = 0, lambda_v = 0,
-                          task = c("classification", "regression")) {
+                          task = c("classification", "regression"),
+                          intercept = TRUE) {
       stopifnot(lambda_w >= 0 && lambda_v >= 0 && learning_rate > 0 && rank >= 1)
       task = match.arg(task);
       private$learning_rate = learning_rate
@@ -51,6 +52,7 @@ FM = R6::R6Class(
       private$lambda_w = lambda_w
       private$lambda_v = lambda_v
       private$task = task
+      private$intercept = intercept
     },
     partial_fit = function(X, y, nthread = 0, weights = rep(1.0, length(y)), ...) {
       if(!inherits(class(X), private$internal_matrix_format)) {
@@ -62,6 +64,7 @@ FM = R6::R6Class(
         private$n_features = X_ncol
         #---------------------------------------------
         private$w0 = 0L
+        fill_float_vector(private$w0, 0.0)
         #---------------------------------------------
         private$w = integer(private$n_features)
         fill_float_vector_randn(private$w, 0.001)
@@ -79,7 +82,8 @@ FM = R6::R6Class(
                                             private$w0,
                                             private$w, private$v,
                                             private$grad_w2, private$grad_v2,
-                                            private$task)
+                                            private$task,
+                                            private$intercept)
         private$ptr_model = fm_create_model(private$ptr_param)
         private$is_initialized = TRUE
       }
@@ -109,7 +113,8 @@ FM = R6::R6Class(
                                               private$w0,
                                               private$w, private$v,
                                               private$grad_w2, private$grad_v2,
-                                              private$task)
+                                              private$task,
+                                              private$intercept)
           private$ptr_model = fm_create_model(private$ptr_param)
         }
       }
@@ -140,6 +145,7 @@ FM = R6::R6Class(
     lambda_w = NULL,
     lambda_v = NULL,
     task = NULL,
+    intercept = NULL,
     #--------------------------------------------------------------
     # these 5 will be modified in place in C++ code
     #--------------------------------------------------------------

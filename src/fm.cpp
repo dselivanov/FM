@@ -33,11 +33,13 @@ public:
   FMParam(float learning_rate,
           int rank,
           float lambda_w, float lambda_v,
-          std::string task_name):
+          std::string task_name,
+          int intercept):
     learning_rate(learning_rate),
     rank(rank),
     lambda_w(lambda_w),
-    lambda_v(lambda_v) {
+    lambda_v(lambda_v),
+    intercept(intercept) {
     if ( task_name == "classification")
       this->task = CLASSIFICATION;
     else if( task_name == "regression")
@@ -45,16 +47,16 @@ public:
     else throw(Rcpp::exception("can't match task code - not in (1=CLASSIFICATION, 2=REGRESSION)"));
   }
   int task = 0;
-
   float learning_rate;
 
   int n_features;
   int rank;
-  float *w0;
 
   float lambda_w;
   float lambda_v;
+  int intercept = 1;
 
+  fvec w0;
   fvec w;
   fvec grad_w2;
 
@@ -80,10 +82,9 @@ public:
     return(-log( this->link_function(pred * actual) ));
     throw(Rcpp::exception("no loss function"));
   }
-  void init_weights(IntegerVector &w0_R,
-                    IntegerVector &w_R, IntegerMatrix &v_R,
+  void init_weights(IntegerVector &w0_R, IntegerVector &w_R, IntegerMatrix &v_R,
                     IntegerVector &grad_w2_R, IntegerMatrix &grad_v2_R) {
-    this->w0 = (float *)w0_R.begin();
+    this->w0 = fvec((float *)w0_R.begin(), 1, false, false);
     // number of features equal to number of input weights
     this->n_features = w_R.size();
 
@@ -101,7 +102,7 @@ public:
   FMParam *params;
 
   float fm_predict_internal(const uint32_t *nnz_index, const double *nnz_value, int offset_start, int offset_end) {
-    float res = *this->params->w0;
+    float res = this->params->w0[0];
     // add linear terms
     #ifdef _OPENMP
     #pragma omp simd
@@ -180,7 +181,8 @@ public:
         dL *= w[i];
         //------------------------------------------------------------------
         // update w0
-        *this->params->w0 -= this->params->learning_rate * dL;
+        if(this->params->intercept)
+          this->params->w0 -= this->params->learning_rate * dL;
         for( uint32_t p = p1; p < p2; p++) {
           uint32_t feature_index  = J[p];
           float feature_value = X[p];
@@ -234,8 +236,9 @@ SEXP fm_create_param(float learning_rate,
                      IntegerMatrix &v_R,
                      IntegerVector &grad_w2_R,
                      IntegerMatrix &grad_v2_R,
-                     const String task) {
-  FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v, task);
+                     const String task,
+                     int intercept) {
+  FMParam * param = new FMParam(learning_rate, rank, lambda_w, lambda_v, task, intercept);
   param->init_weights(w0_R,  w_R, v_R, grad_w2_R, grad_v2_R);
   XPtr< FMParam> ptr(param, true);
   return ptr;

@@ -7,8 +7,8 @@
 using namespace Rcpp;
 
 // fm_create_param
-SEXP fm_create_param(float learning_rate, int rank, float lambda_w, float lambda_v, IntegerVector& w0_R, IntegerVector& w_R, IntegerMatrix& v_R, IntegerVector& grad_w2_R, IntegerMatrix& grad_v2_R, const String task);
-RcppExport SEXP _FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP, SEXP w0_RSEXP, SEXP w_RSEXP, SEXP v_RSEXP, SEXP grad_w2_RSEXP, SEXP grad_v2_RSEXP, SEXP taskSEXP) {
+SEXP fm_create_param(float learning_rate, int rank, float lambda_w, float lambda_v, IntegerVector& w0_R, IntegerVector& w_R, IntegerMatrix& v_R, IntegerVector& grad_w2_R, IntegerMatrix& grad_v2_R, const String task, int intercept);
+RcppExport SEXP _FM_fm_create_param(SEXP learning_rateSEXP, SEXP rankSEXP, SEXP lambda_wSEXP, SEXP lambda_vSEXP, SEXP w0_RSEXP, SEXP w_RSEXP, SEXP v_RSEXP, SEXP grad_w2_RSEXP, SEXP grad_v2_RSEXP, SEXP taskSEXP, SEXP interceptSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -22,7 +22,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< IntegerVector& >::type grad_w2_R(grad_w2_RSEXP);
     Rcpp::traits::input_parameter< IntegerMatrix& >::type grad_v2_R(grad_v2_RSEXP);
     Rcpp::traits::input_parameter< const String >::type task(taskSEXP);
-    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v, w0_R, w_R, v_R, grad_w2_R, grad_v2_R, task));
+    Rcpp::traits::input_parameter< int >::type intercept(interceptSEXP);
+    rcpp_result_gen = Rcpp::wrap(fm_create_param(learning_rate, rank, lambda_w, lambda_v, w0_R, w_R, v_R, grad_w2_R, grad_v2_R, task, intercept));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -110,7 +111,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_FM_fm_create_param", (DL_FUNC) &_FM_fm_create_param, 10},
+    {"_FM_fm_create_param", (DL_FUNC) &_FM_fm_create_param, 11},
     {"_FM_fm_create_model", (DL_FUNC) &_FM_fm_create_model, 1},
     {"_FM_fill_float_matrix_randn", (DL_FUNC) &_FM_fill_float_matrix_randn, 2},
     {"_FM_fill_float_matrix", (DL_FUNC) &_FM_fill_float_matrix, 2},
